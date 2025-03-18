@@ -47,7 +47,7 @@ t =t_train= transforms.Resize((80,80))
 
 
 
-import make_d9_data_test as make_data
+import make_data as make_data
 def init_seeds(seed=0, cuda_deterministic=True):
     random.seed(seed)
     np.random.seed(seed)
