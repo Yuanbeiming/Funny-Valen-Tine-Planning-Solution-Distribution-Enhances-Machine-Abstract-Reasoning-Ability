@@ -1,2 +1,2 @@
 # Funny-Valen-Tine-Planning-Solution-Distribution-Enhances-Machine-Abstract-Reasoning-Ability
-#Coming soon
+This project addresses three types of visual abstract reasoning problems: RAVEN, PGM, and Bongard-Logo. Therefore, the project is structured into three distinct sections, each corresponding to one of these datasets. Each section contains its own folder, which includes the necessary requirements.txt, README.md, and corresponding experimental code.
