@@ -469,10 +469,9 @@ class raven_clip(nn.Module):
         
 
         
-        # loss = F.cross_entropy(x/1,idx)
+        loss = F.cross_entropy(x/1,idx)
         
-        idx_one_hot = F.one_hot(idx, x.shape[-1]).float()
-        loss = F.binary_cross_entropy_with_logits(x, idx_one_hot)
+        
 
         return loss, (x.argmax(dim = -1) == idx).float().sum()
 
