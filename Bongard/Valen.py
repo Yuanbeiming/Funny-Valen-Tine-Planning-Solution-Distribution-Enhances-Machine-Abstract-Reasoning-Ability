@@ -22,21 +22,23 @@ class get_choise(nn.Module):
 
     def forward(self, x):
         
-        b, s, n, m, d = x.shape
-        
-        assert m == 6
+        b, n, s, d = x.shape
 
-        
-        return torch.stack([
-                x[:,[0,1,2,3,4,5,6]],
-                x[:,[0,1,2,3,4,5,7]],
-                x[:,[0,1,2,3,4,5,8]],
-                x[:,[0,1,2,3,4,5,9]],
-                x[:,[0,1,2,3,4,5,10]],
-                x[:,[0,1,2,3,4,5,11]],
-                x[:,[0,1,2,3,4,5,12]],
-                x[:,[0,1,2,3,4,5,13]]
-                ], dim = 1)
+        index = [-6, -5, -4, -3, -2, -1]
+ 
+        for i in range(n-6):
+            index += [i, -5, -4, -3, -2, -1]
+            index += [-6, i, -4, -3, -2, -1]
+            index += [-6, -5, i, -3, -2, -1]
+            index += [-6, -5, -4, i, -2, -1]
+            index += [-6, -5, -4, -3, i, -1]
+            index += [-6, -5, -4, -3, -2, i]
+
+
+
+
+        return x[:, index, ].reshape(b,6,-1,s, d) 
+    
 
 
 class shuffle_sample(nn.Module):
@@ -47,18 +49,50 @@ class shuffle_sample(nn.Module):
         #"""
         if self.training:
         
-            s = x.shape[2]
+            s = x.shape[1]
             
-            assert s == 7
+            assert s == 6
             
             index = torch.randperm(s)
             
             
-            return x[:,:,index]
+            return x[:,index]
         
         else:
         #"""
             return x
+
+
+class Cross_Transformer_layer(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+        super().__init__()
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):#L
+            self.layers.append(nn.ModuleList([
+                
+                Cross_Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)),
+                
+                # Cross_Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
+                # PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)),
+                
+                
+                PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
+                PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout))
+            ]))
+    def forward(self, q_1, kv):
+        
+        # print(q.shape)
+        for c_attn, ff, attn, ff_1 in self.layers:
+
+            kv = attn(kv, name = 'yuanbeiming', name_didi = 'chendiancheng') + kv
+            kv = ff_1(kv) + kv
+            
+            q_1 = c_attn(q_1, kv) + q_1
+            q_1 = ff(q_1) + q_1
+
+        return q_1
+
 
 
 class wq(nn.Module):
@@ -72,7 +106,7 @@ class wq(nn.Module):
         self.low_dim = 512
         self.temperature = 0.01
 
-        self.num_rule = 7
+        self.num_rule = 6
 
         resnet18 = mm.ResNet18()
         
@@ -83,63 +117,93 @@ class wq(nn.Module):
         
         _dropout = .1
 
+        self.shuffle = shuffle_sample()
+
         self.ff = Clstransformer(words = 16, dim = self.low_dim, depth = num_depth, heads = num_head, dim_head = int(self.low_dim/num_head), mlp_dim = self.low_dim, num_cls = self.num_rule, dropout = 0.1)
 
         self.graph_clip = nn.Sequential( 
                                 nn.Sequential(get_choise(), shuffle_sample(),),
-                                Rearrange('b s n m d -> (b s m) n d', s = 8,  n = 7),
-                                graph_transformer(words = 7, dim = self.low_dim, depth = num_depth, heads = num_head, dim_head = int(self.low_dim/num_head), mlp_dim = self.low_dim, num_cls = self.num_rule, dropout = 0.1),
+                                Rearrange('b s n m d -> (b n m) s d', s = 6),
+                                graph_transformer(words = 6, dim = self.low_dim, depth = num_depth, heads = num_head, dim_head = int(self.low_dim/num_head), mlp_dim = self.low_dim, num_cls = self.num_rule, dropout = 0.1),
                                 take_cls(self.num_rule, keepdim = True),
                                 
                                 )
+
+        self.cross_graph_clip = Cross_Transformer(words = 6, dim = self.low_dim, depth = num_depth, heads = num_head, dim_head = int(self.low_dim/num_head), mlp_dim = self.low_dim, dropout = 0.1)
 
         self.tajador = nn.Sequential(Rearrange('b c d -> (b c) d', c = 1),
                             Bottleneck_judge(self.low_dim, self.low_dim),
                             )
 
+    def forward_cross_attention(self,qkv):
 
+        # print(q_1.shape)
+
+       num_tokens =qkv.shape[1] -1
+
+       q, kv = qkv.split([1,num_tokens], dim = 1)
+       
+       q = q[:,None].expand(-1, int(num_tokens/6), -1, -1).reshape(-1, 1, self.low_dim)
+       
+       kv = kv.reshape(-1, 6, int(num_tokens/6), self,low_dim).permute(0,2,1,3).contiguous().reshape(-1, 6, self.low_dim)
+       
+       kv = self.shuffle(kv)
+       
+       out = self.cross_graph_clip(q, kv)
+       
+       
+       
+       return self.tajador(out)
+
+
+
+
+    def forward(self, x):
 
         
-        def forward(self, x):
-     
-            
-            b, n, h, w = x.shape
+        b, n, h, w = x.shape
 
-            x = x.view(b*n, 1, h, w)
+        x = x.view(b*n, 1, h, w)
 
-            x = resnet18(X).reshape(b*n, self.low_dim, -1).permute(0, 2, 1).contiguous()
+        x = resnet18(X).reshape(b*n, self.low_dim, -1).permute(0, 2, 1).contiguous()
 
-            x = self.ff(x).reshape(b, n, -1, self.low_dim)
+        hmap = x.shape[1]
 
-            x = self.graph_clip(x).reshape(-1, self.low_dim)
+        x = self.ff(x).reshape(b, n, hmap, self.low_dim)
 
-            x = self.tajador(x).reshape(b,8,-1,self.num_rule)
-     
+        x = self.graph_clip(x).reshape(b, -1, hmap, self.num_rule, self.low_dim).permute(0, 2, 3, 1, 4).contiguous()
 
-            return x.mean(-1,-2)
+        qkv = x.reshape(b*hmap*self.num_rule, -1, self.low_dim)
+
+        out = self.forward_cross_attention(qkv)
+
+        out = out.reshape(b, hmap, self.num_rule, 8)
+
+
+        return out.mean(1,2)
+
+
+
+
+    def loss_function(self,x):
+
+        idx = torch.ones(x.shape[0]).to(x.device)
         
+        loss = F.cross_entropy(x/1,idx*7)
+                
+        return loss
 
-        
-        
-        def loss_function(self,x):
+    @torch.no_grad()
+    def choose_accuracy(self, x):
 
-            idx = torch.zeros(x.shape[0]).to(x.device)
-            
-            loss = F.cross_entropy(x/1,idx)
-                    
-            return loss
+
+        right = x[:,[-1]]
         
-        @torch.no_grad()
-        def choose_accuracy(self, x):
+        left = x[:,[0]]
         
         
-            right = x[:,[0]]
-            
-            left = x[:,[-1]]
-            
-            
-            
-            return (right > left).float().sum()
+        
+        return (right > left).float().sum()
         
         
         
