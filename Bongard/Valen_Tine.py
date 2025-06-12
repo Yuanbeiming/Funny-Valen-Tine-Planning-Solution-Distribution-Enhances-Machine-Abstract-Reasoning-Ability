@@ -17,7 +17,26 @@ import resnet18 as mm
 
 from Valen import wq as backbone
 
+class Reparameterize_times(nn.Module):
+    def __init__(self, generate_times = 5):
+        super().__init__()
+        
+        self.std_scle = F.tanh
 
+
+
+    def reparameterize(self, mu, logvar):
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        return mu + eps * self.std_scle(std)
+
+
+
+    def forward(self, x):
+
+        
+        mu,logvar = x.chunk(2, dim = -1)
+        return self.reparameterize(mu,logvar)
 
 
 class Cross_Transformer_layer(nn.Module):
@@ -190,7 +209,7 @@ class wq(nn.Module):
         self.low_dim = self.discrim.low_dim
 
 
-        self.discrim.load_state_dict(torch.load('./model/model_Clip_pgm_plus_NA_best.pt', map_location = 'cpu'))
+        # self.discrim.load_state_dict(torch.load('./model/model_Clip_pgm_plus_NA_best.pt', map_location = 'cpu'))
 
         self.generate_times = 5
 
@@ -218,32 +237,34 @@ class wq(nn.Module):
 
         x = x.view(b*n, 1, h, w)
 
-        x = self.discrim.resnet18(X).reshape(b*n, self.low_dim, -1).permute(0, 2, 1).contiguous()
+        x = self.discrim.resnet18(x.expand(-1,3,-1,-1)).reshape(b*n, 512, -1).permute(0, 2, 1).contiguous()
 
         hmap = x.shape[1]
+        
+        x = self.discrim.mapping(x)
 
-        x = self.discrim.ff(x).reshape(b, n, hmap, self.low_dim)
+        x_feature = x = self.discrim.ff(x).reshape(b, n, hmap, self.low_dim)
 
         #x_statement = x.permute(0,2,1,3).reshape(b*hmap, n, self.low_dim)
 
         with torch.no_grad():
 
-            x = self.graph_clip(x).reshape(b, -1, hmap, self.num_rule, self.low_dim).permute(0, 3, 2, 1, 4).contiguous()
+            x = self.discrim.graph_clip(x).reshape(b, -1, hmap, self.num_rule, self.low_dim).permute(0, 3, 2, 1, 4).contiguous()
 
             patterns = x[:,:,:,0]
 
 
-        generate_feature = self.generate(torch.cat([x[:,-6:].detach(), patterns], dim = 1)).reshape(b, hmap, self.generate_times, self.low_dim).permute(0,2,1,3).contiguous()
+        generate_feature = self.generate(torch.cat([x_feature[:,-6:].detach(), patterns], dim = 1)).reshape(b, hmap, self.generate_times, self.low_dim).permute(0,2,1,3).contiguous()
 
-        x = self.graph_clip(torch.cat([generate_feature, x], dim = 1)).reshape(b, -1, hmap, self.num_rule, self.low_dim).permute(0, 2, 3, 1, 4).contiguous()
+        x = self.discrim.graph_clip(torch.cat([generate_feature, x_feature], dim = 1)).reshape(b, -1, hmap, self.num_rule, self.low_dim).permute(0, 2, 3, 1, 4).contiguous()
 
         qkv = x.reshape(b*hmap*self.num_rule, -1, self.low_dim)
 
-        out = self.forward_cross_attention(qkv)
+        out = self.discrim.forward_cross_attention(qkv)
 
         out = out.reshape(b, hmap, self.num_rule, -1)
 
-        return out.mean(1,2)
+        return out.mean(dim = (1,2))
 
 
 
@@ -332,7 +353,17 @@ class wq(nn.Module):
         
         
         
-                    
+if __name__ == '__main__':
+
+    
+    from torchsummary import summary
+    
+    model = wq()
+    
+    print(model)  
+    # with torch.no_grad():
+
+    #     summary(model, (14,512,512))             
                     
             
             

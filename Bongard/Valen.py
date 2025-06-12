@@ -34,7 +34,7 @@ class get_choise(nn.Module):
             index += [-6, -5, -4, -3, i, -1]
             index += [-6, -5, -4, -3, -2, i]
 
-
+        print(len(index))
 
 
         return x[:, index, ].reshape(b,6,-1,s, d) 
@@ -63,36 +63,6 @@ class shuffle_sample(nn.Module):
             return x
 
 
-class Cross_Transformer_layer(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
-        super().__init__()
-        self.layers = nn.ModuleList([])
-        for _ in range(depth):#L
-            self.layers.append(nn.ModuleList([
-                
-                Cross_Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)),
-                
-                # Cross_Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout),
-                # PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout)),
-                
-                
-                PreNorm(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
-                PreNorm(dim, FeedForward(dim, mlp_dim, dropout = dropout))
-            ]))
-    def forward(self, q_1, kv):
-        
-        # print(q.shape)
-        for c_attn, ff, attn, ff_1 in self.layers:
-
-            kv = attn(kv, name = 'yuanbeiming', name_didi = 'chendiancheng') + kv
-            kv = ff_1(kv) + kv
-            
-            q_1 = c_attn(q_1, kv) + q_1
-            q_1 = ff(q_1) + q_1
-
-        return q_1
-
 
 
 class wq(nn.Module):
@@ -103,14 +73,14 @@ class wq(nn.Module):
 
         size = 512
         patch = 64
-        self.low_dim = 512
+        self.low_dim = 256
         self.temperature = 0.01
 
         self.num_rule = 6
 
-        resnet18 = mm.ResNet18()
+        self.resnet18 = mm.ResNet18()
         
-        num_depth = 6
+        num_depth = 3
         
         num_head = 8
         
@@ -118,8 +88,12 @@ class wq(nn.Module):
         _dropout = .1
 
         self.shuffle = shuffle_sample()
+        
+        self.mapping = nn.Linear(512,self.low_dim)
 
-        self.ff = Clstransformer(words = 16, dim = self.low_dim, depth = num_depth, heads = num_head, dim_head = int(self.low_dim/num_head), mlp_dim = self.low_dim, num_cls = self.num_rule, dropout = 0.1)
+        self.ff = graph_transformer(words = 256, dim = self.low_dim, depth = 1, 
+                                    heads = num_head, dim_head = int(self.low_dim/num_head), 
+                                    mlp_dim = self.low_dim, num_cls = 0, dropout = 0.1)
 
         self.graph_clip = nn.Sequential( 
                                 nn.Sequential(get_choise(), shuffle_sample(),),
@@ -145,7 +119,7 @@ class wq(nn.Module):
        
        q = q[:,None].expand(-1, int(num_tokens/6), -1, -1).reshape(-1, 1, self.low_dim)
        
-       kv = kv.reshape(-1, 6, int(num_tokens/6), self,low_dim).permute(0,2,1,3).contiguous().reshape(-1, 6, self.low_dim)
+       kv = kv.reshape(-1, 6, int(num_tokens/6), self.low_dim).permute(0,2,1,3).contiguous().reshape(-1, 6, self.low_dim)
        
        kv = self.shuffle(kv)
        
@@ -164,14 +138,22 @@ class wq(nn.Module):
         b, n, h, w = x.shape
 
         x = x.view(b*n, 1, h, w)
+        
 
-        x = resnet18(X).reshape(b*n, self.low_dim, -1).permute(0, 2, 1).contiguous()
+        x = self.resnet18(x.expand(-1,3,-1,-1))
+        
+        
+        x = x.reshape(b*n, 512, -1).permute(0, 2, 1).contiguous()
 
         hmap = x.shape[1]
+        
+        x = self.mapping(x)
 
         x = self.ff(x).reshape(b, n, hmap, self.low_dim)
 
         x = self.graph_clip(x).reshape(b, -1, hmap, self.num_rule, self.low_dim).permute(0, 2, 3, 1, 4).contiguous()
+        
+        print(x.shape)
 
         qkv = x.reshape(b*hmap*self.num_rule, -1, self.low_dim)
 
@@ -180,7 +162,7 @@ class wq(nn.Module):
         out = out.reshape(b, hmap, self.num_rule, 8)
 
 
-        return out.mean(1,2)
+        return out.mean(dim=(1,2))
 
 
 
@@ -206,7 +188,17 @@ class wq(nn.Module):
         return (right > left).float().sum()
         
         
-        
+if __name__ == '__main__':
+
+    
+    from torchsummary import summary
+    
+    model = wq()
+    
+    print(model)
+
+    with torch.no_grad():
+        summary(model, (14,512,512))    
                     
                     
             
