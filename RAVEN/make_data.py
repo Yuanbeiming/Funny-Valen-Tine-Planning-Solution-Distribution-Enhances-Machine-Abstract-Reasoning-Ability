@@ -95,7 +95,7 @@ class Raven_Data(Data.Dataset):
             self.file_names_npz = val_file[35000:]
             print('valing') 
 
-        assert len(self.file_names_npz) != 0 , '没数据写你马呢？' 
+        assert len(self.file_names_npz) != 0 
         
 		
         self.work_npz = self.file_names_npz
